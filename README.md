@@ -210,7 +210,7 @@ The application has been thoroughly load tested to ensure production readiness:
 - Confidence scores display
 
 ### Model Management
-![Load Testing Results](images/locust.png)
+![Load Testing Results](images/ModelT.png)
 - One-click retraining
 - Performance monitoring
 - Training progress visualization
