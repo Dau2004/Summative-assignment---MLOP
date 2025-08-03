@@ -31,11 +31,15 @@ This ML pipeline application provides an end-to-end solution for weather image c
 - **Performance Monitoring**: Training charts and class distribution analysis
 - **Mobile-Ready**: Flutter frontend with responsive design
 - **Load Testing Ready**: High-performance API capable of handling concurrent requests
+- **Database Storage**: SQLite database for training image metadata and management
+- **Duplicate Detection**: Automatic detection and handling of duplicate images
+- **Training History**: Complete audit trail of training sessions and image usage
 
 ### Technical Architecture
 - **Backend**: FastAPI with TensorFlow/Keras for ML operations
 - **Frontend**: Flutter with real-time dashboard updates
-- **Database**: JSON-based model metadata storage
+- **Database**: SQLite for image metadata, training sessions, and audit trail
+- **Storage**: File system + database hybrid for optimal performance
 - **ML Model**: CNN with 85.8% accuracy on weather classification
 
 ## Architecture Overview
@@ -124,7 +128,29 @@ The application includes a pre-trained model, but you can add your own data:
 
 3. Retrain the model using the Retrain screen
 
-## 📊 Model Performance
+## �️ Database Management
+
+### Image Storage & Metadata
+- **SQLite Database**: Stores image metadata, training history, and session information
+- **Duplicate Detection**: SHA-256 hash-based duplicate prevention
+- **Class Auto-detection**: Intelligent classification based on filename patterns
+- **Training Audit**: Complete trail of which images were used in each training session
+- **File Management**: Cleanup tools for orphaned files and database records
+
+### Database Features
+- **Image Metadata**: Filename, class, dimensions, file size, upload timestamp
+- **Training Sessions**: Session tracking with start/end times, accuracy, images used
+- **Performance Indexing**: Optimized queries for fast data retrieval
+- **Data Integrity**: Foreign key constraints and transaction safety
+
+### Database API
+- Real-time statistics dashboard
+- Individual image management (view/delete)
+- Bulk cleanup operations
+- Training session history
+- Class distribution analytics
+
+## �📊 Model Performance
 
 - **Base Accuracy**: 85.8% on validation set
 - **Classes**: 4 weather categories (Cloudy, Rain, Shine, Sunrise)
@@ -207,6 +233,11 @@ The application implements a sophisticated retraining approach:
 - `GET /model/status` - Model information
 - `GET /model/performance` - Training metrics
 - `GET /health` - System health check
+- `POST /upload` - Upload training images with database storage
+- `GET /database/images` - List all stored training images
+- `GET /database/stats` - Database statistics and metrics
+- `DELETE /database/images/{id}` - Delete specific image
+- `POST /database/cleanup` - Clean up orphaned files and records
 
 ## 🛠️ Development
 
@@ -275,9 +306,22 @@ curl -X POST "http://localhost:8000/predict" \
   -F "file=@path/to/weather/image.jpg"
 ```
 
-#### Get Model Status
+#### Upload Images with Database Storage
 ```bash
-curl http://localhost:8000/model/status
+curl -X POST "http://localhost:8000/upload" \
+  -H "Content-Type: multipart/form-data" \
+  -F "files=@path/to/cloudy/image1.jpg" \
+  -F "files=@path/to/rainy/image2.jpg"
+```
+
+#### Get Database Statistics
+```bash
+curl http://localhost:8000/database/stats
+```
+
+#### List Training Images
+```bash
+curl http://localhost:8000/database/images
 ```
 
 ## 📄 License

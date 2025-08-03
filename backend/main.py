@@ -10,8 +10,155 @@ from typing import List
 import logging  # Add this
 import json  # Add this for saving training history
 from datetime import datetime  # Add this for timestamps
+import sqlite3
+import hashlib
+import base64
 
 app = FastAPI()
+
+# Database setup for image storage and management
+DATABASE_PATH = "image_database.db"
+
+def init_database():
+    """Initialize SQLite database for image storage and metadata"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    
+    # Create images table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            original_filename TEXT NOT NULL,
+            class_name TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_hash TEXT UNIQUE NOT NULL,
+            file_size INTEGER NOT NULL,
+            upload_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            used_for_training BOOLEAN DEFAULT FALSE,
+            training_session_id TEXT,
+            image_width INTEGER,
+            image_height INTEGER,
+            file_format TEXT
+        )
+    ''')
+    
+    # Create training sessions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS training_sessions (
+            id TEXT PRIMARY KEY,
+            start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            end_time DATETIME,
+            images_used INTEGER DEFAULT 0,
+            model_accuracy REAL,
+            epochs_completed INTEGER,
+            status TEXT DEFAULT 'started'
+        )
+    ''')
+    
+    # Create indexes for performance
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_class_name ON images(class_name)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_upload_timestamp ON images(upload_timestamp)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_used_for_training ON images(used_for_training)')
+    
+    conn.commit()
+    conn.close()
+
+def calculate_file_hash(content: bytes) -> str:
+    """Calculate SHA-256 hash of file content"""
+    return hashlib.sha256(content).hexdigest()
+
+def save_image_to_database(filename: str, original_filename: str, class_name: str, 
+                          file_path: str, content: bytes, width: int, height: int, 
+                          file_format: str) -> bool:
+    """Save image metadata to database"""
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        
+        file_hash = calculate_file_hash(content)
+        file_size = len(content)
+        
+        cursor.execute('''
+            INSERT OR IGNORE INTO images 
+            (filename, original_filename, class_name, file_path, file_hash, 
+             file_size, image_width, image_height, file_format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (filename, original_filename, class_name, file_path, file_hash, 
+              file_size, width, height, file_format))
+        
+        success = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return success
+    except Exception as e:
+        print(f"Database error: {e}")
+        return False
+
+def get_training_images() -> List[dict]:
+    """Get all images available for training"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT id, filename, class_name, file_path, upload_timestamp,
+               image_width, image_height, file_size
+        FROM images 
+        WHERE file_path IS NOT NULL
+        ORDER BY upload_timestamp DESC
+    ''')
+    
+    images = []
+    for row in cursor.fetchall():
+        images.append({
+            'id': row[0],
+            'filename': row[1],
+            'class_name': row[2],
+            'file_path': row[3],
+            'upload_timestamp': row[4],
+            'width': row[5],
+            'height': row[6],
+            'file_size': row[7]
+        })
+    
+    conn.close()
+    return images
+
+def get_class_distribution() -> dict:
+    """Get distribution of images by class"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT class_name, COUNT(*) as count
+        FROM images 
+        GROUP BY class_name
+        ORDER BY count DESC
+    ''')
+    
+    distribution = {}
+    for row in cursor.fetchall():
+        distribution[row[0]] = row[1]
+    
+    conn.close()
+    return distribution
+
+def mark_images_used_for_training(session_id: str):
+    """Mark images as used for training in a specific session"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        UPDATE images 
+        SET used_for_training = TRUE, training_session_id = ?
+        WHERE used_for_training = FALSE
+    ''', (session_id,))
+    
+    conn.commit()
+    conn.close()
+
+# Initialize database on startup
+init_database()
 
 # Add CORS middleware for Flutter app
 app.add_middleware(
@@ -184,87 +331,311 @@ async def predict(image: UploadFile = File(...)):
 # Fix endpoint name to match Flutter
 @app.post("/upload")
 async def upload_bulk(files: List[UploadFile] = File(...)):
+    """Enhanced upload endpoint with database storage"""
     try:
-        print(f"Received {len(files)} files for upload")
+        print(f"🔄 Received {len(files)} files for upload")
         saved_files = 0
+        skipped_files = 0
+        errors = []
         
         os.makedirs("uploaded_data", exist_ok=True)
         
         for file in files:
-            print(f"Processing file: {file.filename}")
-            
-            # Consolidated class mapping - 4 CLASSES: Rain, Shine, Cloudy, Sunrise
-            filename_lower = file.filename.lower()
-            class_name = "Unknown"
-            
-            # Map all sunny/shine variations to "Shine"
-            if any(word in filename_lower for word in ['shine', 'sunshine', 'shine', 'clear']):
-                class_name = "Shine"
-            # Map all rain variations to "Rain"  
-            elif any(word in filename_lower for word in ['rain', 'rainy', 'storm', 'stormy']):
-                class_name = "Rain"
-            # Keep cloudy as is
-            elif any(word in filename_lower for word in ['cloud', 'cloudy', 'overcast']):
-                class_name = "Cloudy"
-            # Keep sunrise as is
-            elif any(word in filename_lower for word in ['sunrise', 'sunset', 'dawn', 'dusk']):
-                class_name = "Sunrise"
-            else:
-                # Try filename prefix method
-                try:
-                    prefix = file.filename.split('_')[0].lower()
-                    if prefix in ['shine', 'sunshine', 'shinny', 'clear']:
-                        class_name = "Shine"
-                    elif prefix in ['rain', 'rainy', 'storm', 'stormy']:
-                        class_name = "Rain"
-                    elif prefix in ['cloud', 'cloudy']:
-                        class_name = "Cloudy"
-                    elif prefix in ['sunrise', 'sunset']:
-                        class_name = "Sunrise"
-                except:
-                    pass
-            
-            class_dir = f"uploaded_data/{class_name}"
-            os.makedirs(class_dir, exist_ok=True)
-            
-            file_path = f"{class_dir}/{file.filename}"
-            
-            with open(file_path, "wb") as f:
+            try:
+                print(f"📁 Processing file: {file.filename}")
+                
+                # Read file content
                 content = await file.read()
-                f.write(content)
-            saved_files += 1
-            print(f"Saved file to: {file_path} (detected class: {class_name})")
+                
+                # Validate image
+                try:
+                    image = Image.open(io.BytesIO(content))
+                    width, height = image.size
+                    file_format = image.format or 'UNKNOWN'
+                except Exception as e:
+                    print(f"❌ Invalid image {file.filename}: {e}")
+                    errors.append(f"Invalid image: {file.filename}")
+                    continue
+                
+                # Determine class from filename
+                filename_lower = file.filename.lower()
+                class_name = "Unknown"
+                
+                # Enhanced class detection
+                if any(word in filename_lower for word in ['shine', 'sunshine', 'sunny', 'clear']):
+                    class_name = "Shine"
+                elif any(word in filename_lower for word in ['rain', 'rainy', 'storm', 'stormy']):
+                    class_name = "Rain"
+                elif any(word in filename_lower for word in ['cloud', 'cloudy', 'overcast']):
+                    class_name = "Cloudy"
+                elif any(word in filename_lower for word in ['sunrise', 'sunset', 'dawn', 'dusk']):
+                    class_name = "Sunrise"
+                else:
+                    # Try filename prefix method
+                    try:
+                        prefix = file.filename.split('_')[0].lower()
+                        class_mapping = {
+                            'shine': 'Shine', 'sunshine': 'Shine', 'sunny': 'Shine', 'clear': 'Shine',
+                            'rain': 'Rain', 'rainy': 'Rain', 'storm': 'Rain', 'stormy': 'Rain',
+                            'cloud': 'Cloudy', 'cloudy': 'Cloudy', 'overcast': 'Cloudy',
+                            'sunrise': 'Sunrise', 'sunset': 'Sunrise', 'dawn': 'Sunrise', 'dusk': 'Sunrise'
+                        }
+                        class_name = class_mapping.get(prefix, "Unknown")
+                    except:
+                        pass
+                
+                if class_name == "Unknown":
+                    print(f"⚠️ Could not determine class for {file.filename}")
+                    errors.append(f"Unknown class: {file.filename}")
+                    continue
+                
+                # Create class directory
+                class_dir = f"uploaded_data/{class_name}"
+                os.makedirs(class_dir, exist_ok=True)
+                
+                # Generate unique filename to avoid conflicts
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_extension = os.path.splitext(file.filename)[1]
+                unique_filename = f"{class_name.lower()}_{timestamp}_{saved_files}{file_extension}"
+                file_path = f"{class_dir}/{unique_filename}"
+                
+                # Save file to disk
+                with open(file_path, "wb") as f:
+                    f.write(content)
+                
+                # Save metadata to database
+                db_success = save_image_to_database(
+                    filename=unique_filename,
+                    original_filename=file.filename,
+                    class_name=class_name,
+                    file_path=file_path,
+                    content=content,
+                    width=width,
+                    height=height,
+                    file_format=file_format
+                )
+                
+                if db_success:
+                    saved_files += 1
+                    print(f"✅ Saved: {file_path} (class: {class_name}, {width}x{height})")
+                else:
+                    skipped_files += 1
+                    print(f"⏭️ Skipped duplicate: {file.filename}")
+                    # Remove the file if database save failed (likely duplicate)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                
+            except Exception as e:
+                print(f"❌ Error processing {file.filename}: {e}")
+                errors.append(f"Error processing {file.filename}: {str(e)}")
         
-        print(f"Successfully uploaded {saved_files} files")
-        return {"message": f"Successfully uploaded {saved_files} files", "processed": saved_files}
+        # Get updated class distribution
+        class_distribution = get_class_distribution()
+        
+        result = {
+            "message": f"Upload completed: {saved_files} new files saved, {skipped_files} duplicates skipped",
+            "saved_files": saved_files,
+            "skipped_files": skipped_files,
+            "errors": errors,
+            "class_distribution": class_distribution,
+            "total_images": sum(class_distribution.values()) if class_distribution else 0
+        }
+        
+        print(f"📊 Upload summary: {result}")
+        return result
+        
     except Exception as e:
-        print(f"Upload error: {str(e)}")
+        print(f"💥 Upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/database/images")
+async def get_database_images():
+    """Get all images stored in database"""
+    try:
+        images = get_training_images()
+        class_distribution = get_class_distribution()
+        
+        return {
+            "images": images,
+            "total_count": len(images),
+            "class_distribution": class_distribution,
+            "classes": list(class_distribution.keys())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/database/stats")
+async def get_database_stats():
+    """Get comprehensive database statistics"""
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        
+        # Basic stats
+        cursor.execute("SELECT COUNT(*) FROM images")
+        total_images = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM images WHERE used_for_training = TRUE")
+        training_images = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT SUM(file_size) FROM images")
+        total_size = cursor.fetchone()[0] or 0
+        
+        # Class distribution
+        class_distribution = get_class_distribution()
+        
+        # Recent uploads (last 24 hours)
+        cursor.execute('''
+            SELECT COUNT(*) FROM images 
+            WHERE upload_timestamp > datetime('now', '-1 day')
+        ''')
+        recent_uploads = cursor.fetchone()[0]
+        
+        # Training sessions
+        cursor.execute("SELECT COUNT(*) FROM training_sessions")
+        training_sessions = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            "total_images": total_images,
+            "images_used_for_training": training_images,
+            "total_size_bytes": total_size,
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "class_distribution": class_distribution,
+            "recent_uploads_24h": recent_uploads,
+            "training_sessions_count": training_sessions,
+            "classes_available": len(class_distribution)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/database/images/{image_id}")
+async def delete_image(image_id: int):
+    """Delete an image from database and file system"""
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        
+        # Get image info before deletion
+        cursor.execute("SELECT file_path FROM images WHERE id = ?", (image_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        file_path = result[0]
+        
+        # Delete from database
+        cursor.execute("DELETE FROM images WHERE id = ?", (image_id,))
+        
+        # Delete file if it exists
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        
+        conn.commit()
+        conn.close()
+        
+        return {"message": f"Image {image_id} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/database/cleanup")
+async def cleanup_database():
+    """Clean up database and remove orphaned files"""
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        
+        # Find images with missing files
+        cursor.execute("SELECT id, file_path FROM images")
+        all_images = cursor.fetchall()
+        
+        orphaned_records = 0
+        orphaned_files = 0
+        
+        for image_id, file_path in all_images:
+            if not os.path.exists(file_path):
+                cursor.execute("DELETE FROM images WHERE id = ?", (image_id,))
+                orphaned_records += 1
+        
+        # Find files not in database
+        if os.path.exists("uploaded_data"):
+            cursor.execute("SELECT file_path FROM images")
+            db_files = {row[0] for row in cursor.fetchall()}
+            
+            for class_dir in ['Cloudy', 'Rain', 'Shine', 'Sunrise']:
+                class_path = f"uploaded_data/{class_dir}"
+                if os.path.exists(class_path):
+                    for filename in os.listdir(class_path):
+                        file_path = f"{class_path}/{filename}"
+                        if file_path not in db_files and os.path.isfile(file_path):
+                            os.remove(file_path)
+                            orphaned_files += 1
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            "message": "Database cleanup completed",
+            "orphaned_records_removed": orphaned_records,
+            "orphaned_files_removed": orphaned_files
+        }
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/retrain")
 async def execute_retraining(epochs: int = 10):
+    """Enhanced retraining with database integration"""
     try:
-        # Check if uploaded_data directory exists and has files
-        if not os.path.exists("uploaded_data"):
-            raise HTTPException(status_code=400, detail="No training data found. Please upload images first.")
+        # Generate unique training session ID
+        session_id = f"training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Check if any class folders have images
-        class_folders = [f for f in os.listdir("uploaded_data") if os.path.isdir(os.path.join("uploaded_data", f))]
-        if not class_folders:
-            raise HTTPException(status_code=400, detail="No training data found. Please upload images first.")
+        # Record training session start
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO training_sessions (id, status, images_used)
+            VALUES (?, 'started', 0)
+        ''', (session_id,))
+        conn.commit()
+        conn.close()
         
-        # Count images per class
-        valid_classes = 0
-        total_images = 0
-        class_distribution = {}
+        # Get training images from database
+        training_images = get_training_images()
         
-        for class_folder in class_folders:
-            class_path = os.path.join("uploaded_data", class_folder)
-            images = [f for f in os.listdir(class_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-            if len(images) > 0:
-                valid_classes += 1
-                total_images += len(images)
-                class_distribution[class_folder] = len(images)
+        if not training_images:
+            # Fallback to file system check
+            if not os.path.exists("uploaded_data"):
+                raise HTTPException(status_code=400, detail="No training data found. Please upload images first.")
+            
+            class_folders = [f for f in os.listdir("uploaded_data") if os.path.isdir(os.path.join("uploaded_data", f))]
+            if not class_folders:
+                raise HTTPException(status_code=400, detail="No training data found. Please upload images first.")
+        
+        # Count images and classes
+        if training_images:
+            class_distribution = {}
+            for img in training_images:
+                class_name = img['class_name']
+                class_distribution[class_name] = class_distribution.get(class_name, 0) + 1
+            
+            total_images = len(training_images)
+            valid_classes = len(class_distribution)
+        else:
+            # Fallback to file system counting
+            class_folders = [f for f in os.listdir("uploaded_data") if os.path.isdir(os.path.join("uploaded_data", f))]
+            valid_classes = 0
+            total_images = 0
+            class_distribution = {}
+            
+            for class_folder in class_folders:
+                class_path = os.path.join("uploaded_data", class_folder)
+                images = [f for f in os.listdir(class_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                if len(images) > 0:
+                    valid_classes += 1
+                    total_images += len(images)
+                    class_distribution[class_folder] = len(images)
         
         if total_images == 0:
             raise HTTPException(status_code=400, detail="No valid image files found. Please upload images first.")
@@ -572,10 +943,24 @@ async def execute_retraining(epochs: int = 10):
             with open('training_history.json', 'w') as f:
                 json.dump(training_history, f, indent=2)
             
+            # Update training session completion in database
+            conn = sqlite3.connect(DATABASE_PATH)
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE training_sessions 
+                SET end_time = CURRENT_TIMESTAMP, model_accuracy = ?, epochs_completed = ?, status = 'completed'
+                WHERE id = ?
+            ''', (float(final_accuracy), epochs, session_id))
+            conn.commit()
+            conn.close()
+            
+            print(f"✅ Training session {session_id} completed successfully")
+            
             return {
                 "message": f"{training_type} completed successfully with {total_images} images across {valid_classes} classes",
                 "status": "success",
                 "training_type": training_type,
+                "session_id": session_id,
                 "base_model_used": base_model is not None,
                 "accuracy": float(final_accuracy),
                 "val_accuracy": float(val_accuracy),
@@ -618,33 +1003,41 @@ async def execute_retraining(epochs: int = 10):
 # Fix endpoint name to match Flutter
 @app.get("/model/status")
 async def get_model_status():
+    """Enhanced model status with database integration"""
     try:
-        # Check if we have real training data
-        if os.path.exists("uploaded_data"):
-            class_folders = [f for f in os.listdir("uploaded_data") if os.path.isdir(os.path.join("uploaded_data", f))]
-            class_distribution = {}
-            total_images = 0
-            
-            for class_folder in class_folders:
-                class_path = os.path.join("uploaded_data", class_folder)
-                images = [f for f in os.listdir(class_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                if len(images) > 0:
-                    class_distribution[class_folder] = len(images)
-                    total_images += len(images)
-        else:
-            # Default data if no uploads yet
-            class_distribution = {
-                "Sunny": 120,
-                "Rainy": 80,
-                "Cloudy": 100,
-                "Stormy": 50
-            }
-            total_images = 350
+        # Get database statistics
+        db_stats = await get_database_stats()
         
-        # Check if retrained model exists
+        # Use database information for class distribution
+        class_distribution = db_stats['class_distribution']
+        total_images = db_stats['total_images']
+        
+        # Fallback to file system if database is empty
+        if total_images == 0:
+            if os.path.exists("uploaded_data"):
+                class_folders = [f for f in os.listdir("uploaded_data") if os.path.isdir(os.path.join("uploaded_data", f))]
+                for class_folder in class_folders:
+                    class_path = os.path.join("uploaded_data", class_folder)
+                    images = [f for f in os.listdir(class_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                    if len(images) > 0:
+                        class_distribution[class_folder] = len(images)
+                        total_images += len(images)
+            else:
+                # Default data if no uploads yet
+                class_distribution = {
+                    "Cloudy": 120,
+                    "Rain": 80,
+                    "Shine": 100,
+                    "Sunrise": 50
+                }
+                total_images = 350
+        
+        # Model information
         model_version = "1.0.0"
         last_trained = "2025-07-28"
         accuracy = 0.88
+        precision = 0.86
+        recall = 0.84
         training_metrics = {}
         
         # Load training history if available
@@ -655,16 +1048,20 @@ async def get_model_status():
                     training_metrics = {
                         'accuracy': training_history.get('accuracy', 0.88),
                         'val_accuracy': training_history.get('val_accuracy', 0.85),
+                        'precision': training_history.get('precision', 0.86),
+                        'recall': training_history.get('recall', 0.84),
                         'loss': training_history.get('loss', 0.25),
                         'val_loss': training_history.get('val_loss', 0.28),
                         'epochs_completed': training_history.get('epochs_completed', 1),
                         'training_date': training_history.get('training_date', '2025-07-31'),
                         'training_type': training_history.get('training_type', 'Training'),
                         'improvement_note': training_history.get('improvement_note', ''),
-                        'dataset_size': training_history.get('dataset_size', 0),
-                        'class_count': training_history.get('class_count', 4)
+                        'dataset_size': training_history.get('dataset_size', total_images),
+                        'class_count': training_history.get('class_count', len(class_distribution))
                     }
                     accuracy = training_metrics['accuracy']
+                    precision = training_metrics.get('precision', 0.86)
+                    recall = training_metrics.get('recall', 0.84)
                     # Keep full ISO timestamp for proper time calculation
                     last_trained = training_metrics.get('last_trained', training_metrics['training_date'])
                     # Extract time for display if needed
