@@ -519,10 +519,15 @@ async def execute_retraining(epochs: int = 10):
             class_names = actual_class_names
             print(f"🔄 Updated global model and class names to: {class_names}")
             
-            # Also save class names in training history for persistence
-            training_history_temp = {
-                'class_names': actual_class_names
-            }
+            # Update the load_best_model function to use the new model
+            if base_model is not None:
+                # If we fine-tuned, prioritize the fine-tuned model
+                if os.path.exists('model_fine_tuned.h5'):
+                    print("🔄 Model priority updated to use fine-tuned model")
+            else:
+                # If we trained from scratch, use the retrained model
+                if os.path.exists('model_retrained.h5'):
+                    print("🔄 Model priority updated to use retrained model")
             
             final_accuracy = history.history['accuracy'][-1]
             final_loss = history.history['loss'][-1]
@@ -549,7 +554,8 @@ async def execute_retraining(epochs: int = 10):
                 'loss': float(final_loss),
                 'val_loss': float(val_loss),
                 'epochs_completed': len(history.history['accuracy']),
-                'training_date': str(datetime.now().isoformat()),
+                'training_date': datetime.now().isoformat(),
+                'last_trained': datetime.now().isoformat(),  # Add this for dashboard
                 'training_type': training_type,  # "Fine-tuning" or "Training from scratch"
                 'base_model_used': base_model is not None,
                 'dataset_size': total_images,
@@ -579,7 +585,9 @@ async def execute_retraining(epochs: int = 10):
                 "classes": valid_classes,
                 "class_distribution": class_distribution,
                 "epochs_completed": len(history.history['accuracy']),
-                "improvement_note": improvement_note if base_model is not None else "New model trained"
+                "improvement_note": improvement_note if base_model is not None else "New model trained",
+                "last_trained": datetime.now().isoformat(),  # Add timestamp
+                "training_date": datetime.now().isoformat()   # Add timestamp
             }
             
         except Exception as retrain_error:
@@ -650,13 +658,24 @@ async def get_model_status():
                         'loss': training_history.get('loss', 0.25),
                         'val_loss': training_history.get('val_loss', 0.28),
                         'epochs_completed': training_history.get('epochs_completed', 1),
-                        'training_date': training_history.get('training_date', '2025-07-31')
+                        'training_date': training_history.get('training_date', '2025-07-31'),
+                        'training_type': training_history.get('training_type', 'Training'),
+                        'improvement_note': training_history.get('improvement_note', ''),
+                        'dataset_size': training_history.get('dataset_size', 0),
+                        'class_count': training_history.get('class_count', 4)
                     }
                     accuracy = training_metrics['accuracy']
-                    last_trained = training_metrics['training_date'][:10]  # Extract date part
-                    model_version = "1.1.0"
+                    # Keep full ISO timestamp for proper time calculation
+                    last_trained = training_metrics.get('last_trained', training_metrics['training_date'])
+                    # Extract time for display if needed
+                    if 'T' in last_trained:
+                        training_time = last_trained.split('T')[1].split('.')[0] if '.' in last_trained else last_trained.split('T')[1]
+                        training_metrics['training_time'] = training_time
+                    model_version = "1.1.0"  # Indicate retrained model
+                    print(f"📊 Loaded training history: {training_metrics['training_type']} completed on {last_trained}")
             except Exception as e:
                 print(f"Error loading training history: {e}")
+                training_metrics = {}
         
         if os.path.exists("model_retrained.h5") or os.path.exists("model_retrained.keras"):
             if not training_metrics:  # Only set defaults if no training history
@@ -725,6 +744,26 @@ async def get_training_performance():
             "loss_history": [],
             "val_loss_history": [],
             "epochs_completed": 0
+        }
+
+@app.get("/health")
+async def get_health():
+    """Health check endpoint with model information"""
+    try:
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "model_loaded": model is not None,
+            "class_names": class_names,
+            "training_history_exists": os.path.exists("training_history.json"),
+            "available_models": [f for f in os.listdir('.') if f.endswith('.h5')],
+            "server": "running"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
         }
 
 @app.get("/status")
