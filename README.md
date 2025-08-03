@@ -182,7 +182,7 @@ The application has been thoroughly load tested to ensure production readiness:
 - ✅ **Scalable Architecture**: Maintains performance with increased load
 - ✅ **Production Ready**: Suitable for real-world deployment
 
-![Load Testing Results](images/load_testing_screenshot.png)
+![Load Testing Results](images/locust.png)
 
 *Load testing simulation showing 44,990 requests with 9.8 RPS and 2% failure rate*
 
