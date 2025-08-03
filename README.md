@@ -196,7 +196,7 @@ The application has been thoroughly load tested to ensure production readiness:
 ## 📱 Application Screenshots
 
 ### Dashboard
-![Load Testing Results](images/locust.png)
+![Load Testing Results](images/Dashboard.png)
 
 - Real-time training performance charts
 - Model accuracy visualization
