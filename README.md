@@ -196,17 +196,21 @@ The application has been thoroughly load tested to ensure production readiness:
 ## 📱 Application Screenshots
 
 ### Dashboard
+![Load Testing Results](images/locust.png)
+
 - Real-time training performance charts
 - Model accuracy visualization
 - Class distribution analysis
 - Live timestamp updates
 
 ### Prediction Interface
+![Load Testing Results](images/locust.png)
 - Drag-and-drop image upload
 - Real-time classification results
 - Confidence scores display
 
 ### Model Management
+![Load Testing Results](images/locust.png)
 - One-click retraining
 - Performance monitoring
 - Training progress visualization
