@@ -1,0 +1,27 @@
+name: weather_classifier 
+description: "A weather classification app that uses machine learning to classify weather conditions based on images."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.1.0
+  file_picker: ^8.0.0+1
+  image_picker: ^1.0.7
+  fl_chart: ^0.68.0
+  provider: ^6.1.2
+  path_provider: ^2.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
