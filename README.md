@@ -128,7 +128,7 @@ The application includes a pre-trained model, but you can add your own data:
 
 3. Retrain the model using the Retrain screen
 
-## �️ Database Management
+## 🗄️ Database Management
 
 ### Image Storage & Metadata
 - **SQLite Database**: Stores image metadata, training history, and session information
@@ -150,14 +150,14 @@ The application includes a pre-trained model, but you can add your own data:
 - Training session history
 - Class distribution analytics
 
-## �📊 Model Performance
+## 📊 Model Performance
 
 - **Base Accuracy**: 85.8% on validation set
 - **Classes**: 4 weather categories (Cloudy, Rain, Shine, Sunrise)
 - **Architecture**: Convolutional Neural Network
 - **Training Strategy**: Transfer learning with smart feature extraction
 
-## 📈 Load Testing Results
+## Load Testing Results
 
 The application has been thoroughly load tested to ensure production readiness:
 
@@ -265,7 +265,7 @@ The application implements a sophisticated retraining approach:
 - **Upload Manager**: Batch image processing
 - **Real-time Dashboard**: Live updates with Timer management
 
-## 🧪 Testing
+## Testing
 
 ### Backend Testing
 ```bash
@@ -288,7 +288,7 @@ pip install locust
 locust -f loadtest.py --host=http://localhost:8000
 ```
 
-## 🚦 API Documentation
+## API Documentation
 
 Access the interactive API documentation at `http://localhost:8000/docs` when the backend is running.
 
