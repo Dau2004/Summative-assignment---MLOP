@@ -204,7 +204,7 @@ The application has been thoroughly load tested to ensure production readiness:
 - Live timestamp updates
 
 ### Prediction Interface
-![Load Testing Results](images/locust.png)
+![Load Testing Results](images/prediction.png)
 - Drag-and-drop image upload
 - Real-time classification results
 - Confidence scores display
