@@ -170,7 +170,7 @@ app.add_middleware(
 )
 
 # Load model (with error handling) - prioritize newly trained model
-model = None
+model = "Models/model_new_trained.h5"
 class_names = ['Cloudy', 'Rain', 'Shine', 'Sunrise']  # Correct mapping from new training
 
 def load_best_model():
@@ -179,7 +179,7 @@ def load_best_model():
     
     # Use only the original model for predictions
     model_files = [
-        ('model_new_trained.h5', 'Best trained model')
+        ('Models/model_new_trained.h5', 'Best trained model')
     ]
     
     for model_file, description in model_files:
@@ -1174,5 +1174,6 @@ async def get_status():
 
 if __name__ == "__main__":
     import uvicorn
-    # Change port to 8000
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use PORT environment variable for Render, fallback to 8000 for local development
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
